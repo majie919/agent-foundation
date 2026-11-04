@@ -3,6 +3,8 @@
 ## 跑起来
 
 ```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows；macOS/Linux 用 source .venv/bin/activate
 pip install -r requirements.txt
 python -m uvicorn main:app --reload
 ```
