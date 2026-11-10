@@ -1,8 +1,12 @@
 from fastapi import FastAPI
 
-app = FastAPI(title="agent-foundation")
+from routers import greeting, system
 
+app = FastAPI(
+    title="agent-foundation",
+    version="0.2.0",
+    description="AI 应用实习准备项目：从接口拆分开始，逐步长成一个能跑批处理的小工具。",
+)
 
-@app.get("/health")
-def health():
-    return {"ok": True}
+app.include_router(system.router)
+app.include_router(greeting.router)
