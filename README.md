@@ -9,6 +9,7 @@
 - 清洗模型输出里的排版字符（长破折号 `–`、弯引号 `""`）为 ASCII
 - 支持 `mode=mock` 用模板快速返回，方便对比效果和没配 Key 时联调
 - 模型调用失败时返回 502 并带上原因，不会用假数据糊弄调用方
+- 批量接口一次最多 20 条，线程池并发（默认 4）；单条失败不影响其余，逐条返回原因
 
 ## 跑起来
 
@@ -58,6 +59,40 @@ curl -X POST "http://127.0.0.1:8010/products/describe" \
 
 加 `?mode=mock` 走模板拼接，不消耗额度，用于对比。
 
+### 批量
+
+```bash
+curl -X POST "http://127.0.0.1:8010/products/batch?workers=4" \
+  -H "Content-Type: application/json" \
+  -d '{"items":[
+    {"name":"Bamboo Cutting Board","category":"kitchen","features":["eco friendly"]},
+    {"name":"LED Desk Lamp","category":"home","features":["dimmable","usb charging"]}
+  ]}'
+```
+
+```json
+{
+  "results": [
+    {"index": 0, "name": "Bamboo Cutting Board", "ok": true, "listing": { "...": "..." }, "error": null},
+    {"index": 1, "name": "LED Desk Lamp", "ok": false, "listing": null, "error": "模型接口返回 429：..."}
+  ],
+  "summary": {"total": 2, "success": 1, "failed": 1, "elapsed_seconds": 6.12},
+  "source": "llm"
+}
+```
+
+参数说明：
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `mode` | `llm` | `mock` 走模板，不消耗额度 |
+| `workers` | `4` | 并发数，1–8。调大更快，但可能触发接口限流 |
+
+实测 4 条真实调用：`workers=1` 耗时 16.8 秒，`workers=4` 耗时 5.3 秒。
+
+单条失败不会让整批报错——接口仍返回 200，失败项在 `results` 里标 `ok=false` 并附原因。**部分成功比整体失败更有用**：调用方能直接拿成功的那些去上架，失败的单独重跑。
+
+
 ## 结构
 
 ```
@@ -68,7 +103,7 @@ llm.py               调用大模型、清洗标点、解析 JSON
 routers/
   system.py          /health /version
   greeting.py        /hello
-  products.py        /products/describe
+  products.py        /products/describe、/products/batch
 ```
 
 ## 进度
@@ -79,6 +114,7 @@ routers/
 - [x] 接入 DeepSeek 生成真实文案
 - [x] 标题截断与标点清洗
 - [x] 配置与密钥分离（.env）
+- [x] 批量处理（并发 + 单条失败隔离）
 - [ ] 失败重试退避与超时细分
-- [ ] 批量处理与结果落库
+- [ ] 结果落库
 - [ ] Docker 容器化
