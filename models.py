@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HealthResponse(BaseModel):
@@ -24,13 +24,24 @@ class VersionResponse(BaseModel):
 
 
 class ProductIn(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Bamboo Cutting Board",
+                "category": "kitchen",
+                "features": ["eco friendly", "easy to clean", "gift ready"],
+            }
+        }
+    )
+
     name: str = Field(min_length=1, max_length=100, description="产品英文名，例如 Bamboo Cutting Board")
     category: str = Field(min_length=1, max_length=30, description="类目，例如 kitchen / toy / beauty")
-    features: list[str] = Field( min_length=1, max_length=5, description="卖点列表，1 到 5 条")
+    features: list[str] = Field(min_length=1, max_length=5, description="卖点列表，1 到 5 条")
 
 
 class ProductDescription(BaseModel):
     title: str = Field(description="listing 标题")
     bullets: list[str] = Field(description="五点描述，逐条列出卖点")
     keywords: list[str] = Field(description="搜索关键词")
+    char_count: int = Field(description="标题字符数，亚马逊标题上限 200")
     source: str = Field(description="文案来源：mock 表示模板生成，llm 表示大模型生成")
