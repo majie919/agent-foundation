@@ -7,10 +7,14 @@ router = APIRouter(prefix="/products", tags=["产品文案"])
 TITLE_LIMIT = 200
 
 
+
 def trim_title(text: str, limit: int = TITLE_LIMIT) -> str:
     """标题超长时截断到 limit 以内，且不把单词切成两半。"""
     if len(text) <= limit:
         return text
+
+    if text[limit].isspace():
+        return text[:limit].rstrip(" ,-")
 
     cut = text[:limit]
     last_space = cut.rfind(" ")
