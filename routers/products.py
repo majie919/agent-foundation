@@ -1,11 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 
+from llm import generate_listing
 from models import ProductDescription, ProductIn
 
 router = APIRouter(prefix="/products", tags=["产品文案"])
 
 TITLE_LIMIT = 200
-
 
 
 def trim_title(text: str, limit: int = TITLE_LIMIT) -> str:
@@ -24,10 +24,8 @@ def trim_title(text: str, limit: int = TITLE_LIMIT) -> str:
     return cut.rstrip(" ,-")
 
 
-@router.post("/describe", response_model=ProductDescription, summary="根据产品信息生成 listing 文案")
-def describe_product(payload: ProductIn):
-    title = trim_title(f"{payload.name} - {payload.category.title()} Essential")
-
+def build_mock_listing(payload: ProductIn) -> dict:
+    """模板版本，不调模型。用于对比效果，也方便没配 Key 时联调。"""
     bullets = []
     for i, feature in enumerate(payload.features, start=1):
         bullets.append(f"{i}. {feature}")
@@ -37,9 +35,41 @@ def describe_product(payload: ProductIn):
         keywords.append(feature.lower())
 
     return {
-        "title": title,
+        "title": f"{payload.name} - {payload.category.title()} Essential",
         "bullets": bullets,
         "keywords": keywords,
+    }
+
+
+@router.post(
+    "/describe",
+    response_model=ProductDescription,
+    summary="根据产品信息生成 listing 文案",
+)
+def describe_product(
+    payload: ProductIn,
+    mode: str = Query(
+        default="llm",
+        pattern="^(llm|mock)$",
+        description="llm 调用真实模型；mock 用模板拼接，便于对比",
+    ),
+):
+    if mode == "mock":
+        data = build_mock_listing(payload)
+        source = "mock"
+    else:
+        try:
+            data = generate_listing(payload.name, payload.category, payload.features)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"文案生成失败：{e}") from e
+        source = "llm"
+
+    title = trim_title(data["title"])
+
+    return {
+        "title": title,
+        "bullets": data["bullets"],
+        "keywords": data["keywords"],
         "char_count": len(title),
-        "source": "mock",
+        "source": source,
     }
