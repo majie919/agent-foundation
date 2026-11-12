@@ -1,0 +1,18 @@
+# 一条命令跑起来：docker compose up -d
+# 前提：项目根目录存在 .env（放 DEEPSEEK_API_KEY），它只在运行时注入，不会被打进镜像
+services:
+  api:
+    build: .
+    image: agent-foundation:latest
+    container_name: agent-foundation
+    ports:
+      # 左边是宿主机端口，右边是容器端口；改左边就能换对外端口
+      - "8010:8010"
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      # SQLite 文件放在容器里，容器一删数据就没了，必须挂到宿主机
+      - ./data:/app/data
+    restart: unless-stopped

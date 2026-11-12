@@ -39,6 +39,31 @@ cp .env.example .env
 
 > 改完代码要手动重启（`Ctrl+C` → `↑` → `Enter`）。不用 `--reload`：它在 Windows 上偶尔检测到改动却不完成重启，会让服务静默地继续跑旧代码。
 
+### 4. 用 Docker 跑（可选）
+
+装了 Docker 之后，不需要 Python 环境，一条命令起服务：
+
+```bash
+docker compose up -d --build     # 构建并后台启动
+docker compose logs -f           # 看日志
+docker compose down              # 停止并删除容器
+```
+
+访问地址不变：http://127.0.0.1:8010/docs
+
+几个刻意的设计：
+
+| 做法 | 原因 |
+|---|---|
+| 先 `COPY requirements.txt` 再 `COPY .` | 依赖层走缓存，只改代码时构建从 40 秒降到 1 秒 |
+| `.dockerignore` 排除 `.venv` / `.env` | 前者是 Windows 二进制，后者是密钥——**镜像层能被 `docker history` 翻出来** |
+| `--host 0.0.0.0` | 默认的 `127.0.0.1` 只指容器自己，宿主机映射的端口永远连不上 |
+| `./data:/app/data` 挂载 | SQLite 在容器里，容器一删数据全没 |
+| 非 root 用户 `appuser` | 容器被攻破时拿到的权限更小 |
+| `HEALTHCHECK` 用 python 探活 | slim 镜像里没有 `curl` |
+
+`.env` 通过 `env_file` 在**运行时**注入，不会进入镜像。
+
 ## 接口
 
 ```bash
@@ -186,5 +211,5 @@ tests/
 - [x] 批量处理（并发 + 单条失败隔离）
 - [x] 结果落库与历史查询（SQLite）
 - [x] 失败重试与指数退避（区分暂时性/永久性故障）
+- [x] Docker 容器化（Dockerfile + compose + 非 root + 健康检查）
 - [ ] 超时细分（connect / read 分开）
-- [ ] Docker 容器化

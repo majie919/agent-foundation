@@ -1,0 +1,22 @@
+# 构建上下文越小越快。.venv 是 Windows 的二进制，塞进 Linux 镜像既没用又巨大
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+.git/
+.gitignore
+.vscode/
+tests/
+
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# 密钥绝不能进镜像：镜像层是可以被任何人 docker history 翻出来的
+.env
+.env.*
+
+README.md
+*.md
