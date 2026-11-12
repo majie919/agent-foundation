@@ -73,9 +73,12 @@ docker compose build --build-arg PIP_INDEX=https://pypi.org/simple
 
 ## 接口
 
+`/products/*` 需要鉴权：请求头带 `X-API-Key`，值来自 `.env` 的 `API_KEYS`（多个用英文逗号分隔，可给不同调用方发不同 Key）。`/health`、`/version`、`/docs` 公开。
+
 ```bash
 curl -X POST "http://127.0.0.1:8010/products/describe" \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <你的Key>" \
   -d '{"name":"Bamboo Cutting Board","category":"kitchen","features":["eco friendly","easy to clean"]}'
 ```
 
@@ -90,6 +93,21 @@ curl -X POST "http://127.0.0.1:8010/products/describe" \
 ```
 
 加 `?mode=mock` 走模板拼接，不消耗额度，用于对比。
+
+### 鉴权与限流（security.py）
+
+| 情形 | 返回 |
+|---|---|
+| 缺 `X-API-Key` 头 / Key 无效 | 401 |
+| 60 秒窗口内超过 `RATE_LIMIT_MAX`（默认 30）次 | 429，带 `Retry-After` 头 |
+| `API_KEYS` 留空 | 开发模式：不校验 Key，但仍限流 |
+
+两个设计点：
+
+- **限流是滑动窗口**：只统计"最近 N 秒"的真实时间戳。固定窗口（每分钟清零）在边界处会放进双倍流量——第 59 秒打满、第 61 秒清零又能打满，一分钟实际放进 60 次。
+- **429 带 `Retry-After`**：这是 HTTP 标准，服务端明确告诉客户端等多久。它和 `llm.py` 处理上游 429 的重试逻辑是同一协议的两端。
+
+真实部署时 Key 走明文 HTTP 会被看到，前面要加 HTTPS（反向代理或云网关）；本地 `127.0.0.1` 无所谓。
 
 ### 批量
 

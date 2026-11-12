@@ -3,7 +3,7 @@
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 import config
 import db
@@ -17,8 +17,11 @@ from models import (
     ProductDescription,
     ProductIn,
 )
+from security import rate_limit
 
-router = APIRouter(prefix="/products", tags=["产品文案"])
+# 鉴权 + 限流挂在 router 级：本组所有接口（含将来新增的）自动继承，
+# 不用在每个装饰器上重复写。/health /version 这类探测接口不在这里，保持公开。
+router = APIRouter(prefix="/products", tags=["产品文案"], dependencies=[Depends(rate_limit)])
 
 TITLE_LIMIT = 200
 
