@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+import config
 import db
 from routers import greeting, products, system
 
@@ -19,7 +20,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="agent-foundation",
-    version="0.4.0",
+    version=config.APP_VERSION,
     description="AI 应用实习准备项目：从接口拆分开始，逐步长成一个能跑批处理的小工具。",
     lifespan=lifespan,
 )

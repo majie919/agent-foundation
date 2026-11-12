@@ -4,6 +4,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# 版本号只在这里写一次，/health、/version、app 元信息都引用它。
+# 之前三处各写一份，改了两处忘了第三处，接口就报了个过期的版本。
+APP_VERSION = "0.4.0"
+BUILD_TIME = "2026-11-12 12:30"
+
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
