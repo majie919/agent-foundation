@@ -6,9 +6,12 @@
 """
 
 import json
+import random
 import re
+import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 
 import config
 
@@ -43,6 +46,43 @@ _PROMPT_TEMPLATE = """你是亚马逊 listing 文案专家。根据产品信息�
 输出格式：
 {{"title": "...", "bullets": ["...", "..."], "keywords": ["...", "..."]}}"""
 
+# 这些状态码代表"暂时性故障"，再试一次可能就好了
+_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
+
+
+class ModelError(RuntimeError):
+    """模型调用失败。
+
+    status     HTTP 状态码，网络层失败时为 None
+    retryable  是否值得重试（区分"暂时性故障"和"我的请求本身有问题"）
+    retry_after 服务端在 Retry-After 头里要求的等待秒数
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status: int | None = None,
+        retryable: bool = False,
+        retry_after: float | None = None,
+    ):
+        super().__init__(message)
+        self.status = status
+        self.retryable = retryable
+        self.retry_after = retry_after
+
+
+def _retry_after_seconds(headers) -> float | None:
+    """读取 429 响应里的 Retry-After（只认秒数，HTTP 日期格式先不处理）。"""
+    if not headers:
+        return None
+    raw = headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return None
+
 
 def clean_text(text: str) -> str:
     """统一标点，并合并多余空白。"""
@@ -73,17 +113,31 @@ def _call_model(prompt: str, timeout: float = 30.0) -> str:
 
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            raw_bytes = resp.read()
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "ignore")[:200]
-        raise RuntimeError(f"模型接口返回 {e.code}：{detail}") from e
+        raise ModelError(
+            f"模型接口返回 {e.code}：{detail}",
+            status=e.code,
+            retryable=e.code in _RETRYABLE_STATUS,
+            retry_after=_retry_after_seconds(e.headers),
+        ) from e
     except urllib.error.URLError as e:
-        raise RuntimeError(f"连不上模型接口：{e.reason}") from e
+        # 断网、DNS 失败、连接被拒：等一会儿再试有意义
+        raise ModelError(f"连不上模型接口：{e.reason}", retryable=True) from e
+    except OSError as e:
+        # 读超时、连接被重置
+        raise ModelError(f"网络异常：{e}", retryable=True) from e
+
+    try:
+        data = json.loads(raw_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise ModelError(f"响应不是合法 JSON：{raw_bytes[:120]!r}", retryable=True) from e
 
     try:
         return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as e:
-        raise RuntimeError(f"模型返回格式异常：{str(data)[:200]}") from e
+        raise ModelError(f"模型返回格式异常：{str(data)[:200]}", retryable=True) from e
 
 
 def _extract_json(text: str) -> dict:
@@ -100,45 +154,93 @@ def _extract_json(text: str) -> dict:
     return json.loads(cleaned[start : end + 1])
 
 
+def _parse_listing(raw: str) -> dict:
+    """把模型输出的原始文本整理成结构化结果。
+
+    这里所有失败都归为"可重试"——模型每次输出都不一样，换一次很可能就正常了。
+    """
+    try:
+        data = _extract_json(raw)
+    except ValueError as e:
+        raise ModelError(f"模型输出不是 JSON：{e}", retryable=True) from e
+
+    if not isinstance(data, dict):
+        raise ModelError(f"模型输出不是对象：{str(data)[:150]}", retryable=True)
+
+    title = clean_text(data.get("title", ""))
+    if not title:
+        raise ModelError("模型没有返回 title", retryable=True)
+
+    bullets = []
+    for item in data.get("bullets", []):
+        text_item = clean_text(item)
+        if text_item:
+            bullets.append(text_item)
+
+    keywords = []
+    for item in data.get("keywords", []):
+        text_item = clean_text(item).lower()
+        if text_item:
+            keywords.append(text_item)
+
+    return {"title": title, "bullets": bullets, "keywords": keywords}
+
+
+def _backoff_delay(
+    attempt: int,
+    base: float = 1.0,
+    cap: float = 8.0,
+    retry_after: float | None = None,
+) -> float:
+    """第 attempt 次重试前该等多久。
+
+    服务端明确说了 Retry-After 就听它的（但不超过上限）；
+    否则按 1s、2s、4s 指数增长，再叠一层随机抖动避免所有请求同一时刻涌上去。
+    """
+    if retry_after is not None:
+        return min(float(retry_after), cap)
+    nominal = min(cap, base * (2**attempt))
+    return nominal * (0.5 + random.random() * 0.5)
+
+
 def generate_listing(
     name: str,
     category: str,
     features: list[str],
-    retries: int = 1,
+    retries: int = 2,
+    base_delay: float = 1.0,
+    max_delay: float = 8.0,
+    sleep: Callable[[float], None] | None = None,
+    log: Callable[[str], None] | None = None,
 ) -> dict:
-    """生成 listing 文案。失败会重试，最终失败则抛 RuntimeError。"""
+    """生成 listing 文案。
+
+    暂时性失败（429 / 5xx / 超时 / 输出不是 JSON）按指数退避重试；
+    永久性失败（401 密钥错误、400 参数错误）立刻抛出，不做无意义的等待。
+    """
     prompt = _PROMPT_TEMPLATE.format(
         name=name,
         category=category,
         features=", ".join(features),
     )
 
+    sleep = sleep or time.sleep
+    log = log or print
+
     last_error: Exception | None = None
 
-    for _ in range(retries + 1):
+    for attempt in range(retries + 1):
         try:
-            raw = _call_model(prompt)
-            data = _extract_json(raw)
-
-            title = clean_text(data.get("title", ""))
-            if not title:
-                raise ValueError("模型没有返回 title")
-
-            bullets = []
-            for item in data.get("bullets", []):
-                text_item = clean_text(item)
-                if text_item:
-                    bullets.append(text_item)
-
-            keywords = []
-            for item in data.get("keywords", []):
-                text_item = clean_text(item).lower()
-                if text_item:
-                    keywords.append(text_item)
-
-            return {"title": title, "bullets": bullets, "keywords": keywords}
-
-        except Exception as e:  # noqa: BLE001 - 任何失败都值得重试一次
+            return _parse_listing(_call_model(prompt))
+        except ModelError as e:
             last_error = e
+            if not e.retryable:
+                # 密钥错了、参数错了，重试一百次也一样，立刻失败
+                raise
+            if attempt == retries:
+                break
+            delay = _backoff_delay(attempt, base_delay, max_delay, e.retry_after)
+            log(f"[llm] 第 {attempt + 1} 次失败（{e}），{delay:.2f}s 后重试")
+            sleep(delay)
 
     raise RuntimeError(f"生成失败（已重试 {retries} 次）：{last_error}")
