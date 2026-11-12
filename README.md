@@ -61,8 +61,15 @@ docker compose down              # 停止并删除容器
 | `./data:/app/data` 挂载 | SQLite 在容器里，容器一删数据全没 |
 | 非 root 用户 `appuser` | 容器被攻破时拿到的权限更小 |
 | `HEALTHCHECK` 用 python 探活 | slim 镜像里没有 `curl` |
+| 依赖源用 `PIP_INDEX` 构建参数，默认官方源 | 容器出口 IP 与宿主机不同，宿主机好用的国内镜像在容器里可能被拒（实测清华源在容器内对 `/simple/` 直接返回 403） |
 
 `.env` 通过 `env_file` 在**运行时**注入，不会进入镜像。
+
+如果构建时 pip 拉不动，换一个容器内也能连通的索引：
+
+```bash
+docker compose build --build-arg PIP_INDEX=https://pypi.org/simple
+```
 
 ## 接口
 

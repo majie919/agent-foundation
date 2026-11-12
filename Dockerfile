@@ -5,8 +5,14 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_DEFAULT_TIMEOUT=60 \
     TZ=Asia/Shanghai
+
+# 索引源用构建参数传入，默认官方源。
+# 注意：容器内的网络出口和宿主机不同，宿主机好用的国内镜像在容器里未必通
+# （实测清华源在容器内对 /simple/ 直接返回 403），所以这里不写死国内源。
+ARG PIP_INDEX=https://pypi.org/simple
+ENV PIP_INDEX_URL=${PIP_INDEX}
 
 WORKDIR /app
 
