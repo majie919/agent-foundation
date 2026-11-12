@@ -1,0 +1,8 @@
+# 统一换行符：Windows 上 autocrlf 会把文件转成 CRLF，
+# 而 Dockerfile 里 `RUN ... \` 的多行续行遇到 \r 会报 unknown instruction
+* text=auto
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+docker-compose.yml text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
