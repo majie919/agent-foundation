@@ -6,10 +6,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import APIRouter, HTTPException, Query
 
 import config
+import db
 from llm import generate_listing
 from models import (
     BatchItemResult,
     BatchSummary,
+    HistoryOut,
     ProductBatchIn,
     ProductBatchOut,
     ProductDescription,
@@ -78,6 +80,22 @@ def describe_one(payload: ProductIn, mode: str) -> dict:
     }
 
 
+def _save_quietly(pairs: list[tuple[dict, dict]]) -> None:
+    """落库是旁路：存档失败只记一笔，不影响已经生成好的结果。
+
+    这里和"失败不降级"是两回事，方向要分清：
+    - 生成失败必须报错，因为用户拿不到想要的东西；
+    - 存档失败只影响我们自己回溯，用户的东西已经给了。
+    判断标准是"失败影响的是谁"。
+    """
+    if not pairs:
+        return
+    try:
+        db.save_many(pairs)
+    except Exception as e:
+        print(f"[warn] 落库失败，本次 {len(pairs)} 条未存档：{e}")
+
+
 @router.post(
     "/describe",
     response_model=ProductDescription,
@@ -92,9 +110,13 @@ def describe_product(
     ),
 ):
     try:
-        return describe_one(payload, mode)
+        listing = describe_one(payload, mode)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"文案生成失败：{e}") from e
+
+    # 落库放在 try 外面：文案已经生成好了，不能因为存档失败让用户重跑一次
+    _save_quietly([(payload.model_dump(), listing)])
+    return listing
 
 
 @router.post(
@@ -143,6 +165,13 @@ def describe_products_batch(
     final_results = [r for r in results if r is not None]
     success = sum(1 for r in final_results if r.ok)
 
+    # 只存成功的：失败条目没有 listing，硬塞进去会破坏表结构
+    _save_quietly([
+        (payload.items[r.index].model_dump(), r.listing.model_dump())
+        for r in final_results
+        if r.ok and r.listing is not None
+    ])
+
     return {
         "results": final_results,
         "summary": BatchSummary(
@@ -153,3 +182,21 @@ def describe_products_batch(
         ),
         "source": "mock" if mode == "mock" else "llm",
     }
+
+
+@router.get(
+    "/history",
+    response_model=HistoryOut,
+    summary="查看历史生成记录（最新在前）",
+)
+def get_history(
+    limit: int = Query(default=10, ge=1, le=100, description="返回条数上限"),
+    source: str | None = Query(
+        default=None,
+        pattern="^(mock|llm)$",
+        description="只看某个来源，不传则全部",
+    ),
+):
+    items = db.list_history(limit=limit, source=source)
+    # total 是总数，不受 limit 影响：前端要靠它算"还有多少页"
+    return {"total": db.count(source), "limit": limit, "items": items}

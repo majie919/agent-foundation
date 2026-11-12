@@ -82,3 +82,23 @@ class ProductBatchOut(BaseModel):
     results: list[BatchItemResult] = Field(description="每条产品的处理结果，顺序与请求一致")
     summary: BatchSummary = Field(description="整批统计")
     source: str = Field(description="文案来源：mock 或 llm")
+
+
+class HistoryItem(ProductDescription):
+    """一条历史记录 = 生成结果 + 当时的请求参数。
+
+    继承 ProductDescription，省得把 title/bullets/keywords 再抄一遍；
+    这也是 response_model 的常见用法：先定"结果长什么样"，再往上叠元信息。
+    """
+
+    id: int = Field(description="记录 id，自增")
+    name: str = Field(description="产品名")
+    category: str = Field(description="品类")
+    features: list[str] = Field(description="当时提交的卖点列表")
+    created_at: str = Field(description="生成时间，ISO 8601 且带时区")
+
+
+class HistoryOut(BaseModel):
+    total: int = Field(description="符合筛选条件的总条数，不受 limit 影响")
+    limit: int = Field(description="本次返回的条数上限")
+    items: list[HistoryItem] = Field(description="按时间倒序，最新的在前")
